@@ -1,33 +1,34 @@
-function [blob_rows, blob_cols, major_axis, minor_axis] = reject_detector(image, sigma, sublevels, octaves, threshold, reject_threshold)
+function [blob_rows, blob_cols, major_axis, minor_axis] = reject_detector(image, min_sigma, max_sigma, octave_size, supress_size, threshold, reject_threshold)
 
-levels = sublevels * octaves + 1;
-k = 2 ^ (1/sublevels);
+tic
+octaves = log(max_sigma / min_sigma) / log(2);
+levels = octave_size * octaves + 1;
+k = 2 ^ (1/octave_size);
 
 [rows, cols] = size(image);
 
 scale_space = zeros(rows, cols, levels);
 scale_max = zeros(rows, cols, levels);
 
-tic
-filter_size = 2 * round(3 * sigma) + 1;
-filter = sigma^2 * fspecial('log', filter_size, sigma);
+filter_size = 2 * round(3 * min_sigma) + 1;
+filter = min_sigma^2 * fspecial('log', filter_size, min_sigma);
 
-for scale = 1:levels        
-    curr_image = imresize(image, 1/(k^(scale - 1)), 'bicubic');
-    curr_filtered = imfilter(curr_image, filter, 'same', 'replicate') .^ 2;
+for scale = 1:levels  
+    curr_image = imresize(image, 1/(k^(scale - 1)), 'bicubic');   
+    curr_filtered = imfilter(curr_image, filter, 'same', 'replicate') .^ 2;        
+
+    border_size = ceil(min_sigma * k^(scale-1) * sqrt(2));
     scale_space(:, :, scale) = imresize(curr_filtered, size(image), 'bicubic');
+
+    temp_scale = ordfilt2(scale_space(:, :, scale), supress_size^2, true(supress_size));
+    temp_scale(1:border_size, :) = 0;
+    temp_scale(end-border_size+1:end, :) = 0;
+    temp_scale(:, 1:border_size) = 0;
+    temp_scale(:, end-border_size+1:end) = 0;
+
+    scale_max(:, :, scale) = temp_scale;        
 end
-toc
 
-tic
-SUPPRESS_SIZE = 3;
-
-for scale = 1:levels
-    scale_max(:, :, scale) = ordfilt2(scale_space(:, :, scale), SUPPRESS_SIZE^2, true(SUPPRESS_SIZE));
-end
-toc
-
-tic
 scale_max(:, :, 1) = max(scale_max(:, :, 1:2), [], 3);
 
 for scale = 2:levels-1
@@ -35,7 +36,6 @@ for scale = 2:levels-1
 end
 
 scale_max(:, :, levels) = max(scale_max(:, :, levels-1:levels), [], 3);
-toc
 
 scale_max = scale_max .* (scale_max == scale_space);
 
@@ -46,7 +46,7 @@ blob_levels = [];
 
 for scale=1:levels
     [rows, cols] = find(scale_max(:, :, scale) >= threshold);
-    sizes = sigma * k^(scale-1) * sqrt(2) * ones(length(rows), 1); 
+    sizes = min_sigma * k^(scale-1) * sqrt(2) * ones(length(rows), 1); 
     
     blob_rows = [blob_rows; rows];
     blob_cols = [blob_cols; cols];
@@ -69,9 +69,9 @@ Isquares(:, :, 3) = Ix.*Iy;
 Ispace = zeros(rows, cols, 3, levels);
 
 tic
-sigma = sigma;
-filter_size = 2 * round(3 * sigma) + 1;
-filter = fspecial('gaussian', filter_size, sigma);
+min_sigma = min_sigma;
+filter_size = 2 * round(3 * min_sigma) + 1;
+filter = fspecial('gaussian', filter_size, min_sigma);
  
 for scale = 1:levels
     for square = 1:3
